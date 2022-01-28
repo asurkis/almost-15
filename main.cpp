@@ -55,6 +55,18 @@ int main() {
       selected_cell_y = screen_to_cell(mouse_y);
     }
 
+    bool is_mouse_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    if (is_mouse_pressed && mouse_over_cell) {
+      int dx = selected_cell_x - state.empty_x;
+      int dy = selected_cell_y - state.empty_y;
+      if (abs(dx) + abs(dy) == 1) {
+        swap(state.board[selected_cell_y][selected_cell_x],
+             state.board[state.empty_y][state.empty_x]);
+        state.empty_x = selected_cell_x;
+        state.empty_y = selected_cell_y;
+      }
+    }
+
     BeginDrawing();
     ClearBackground(RAYWHITE);
     DrawRectangle(BOARD_OUTER_START, BOARD_OUTER_START, BOARD_OUTER_SIZE,
