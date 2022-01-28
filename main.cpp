@@ -1,5 +1,9 @@
-#include <bits/stdc++.h>
+#include <algorithm>
 #include <raylib.h>
+
+#ifdef PLATFORM_WEB
+#include <emscripten/emscripten.h>
+#endif
 
 using namespace std;
 
@@ -7,7 +11,6 @@ static const int SCREEN_SIZE = 900;
 static const int CELL_SIZE_HALF = 80;
 static const int CELL_SIZE = 2 * CELL_SIZE_HALF;
 static const int CELL_MARGIN = 3;
-static const int BORDER_WIDTH = 2 * CELL_MARGIN;
 static const int CELL_OFFSET = CELL_SIZE + 2 * CELL_MARGIN;
 static const int BOARD_SIZE = 4 * CELL_OFFSET;
 static const int BOARD_START = (SCREEN_SIZE - BOARD_SIZE) / 2;
@@ -45,7 +48,7 @@ struct Game {
         x = empty_x - dx;
         y = empty_y - dy;
       }
-      printf("move=%d, dx=%d, dy=%d, x=%d y=%d\n", move, dx, dy, x, y);
+      // printf("move=%d, dx=%d, dy=%d, x=%d y=%d\n", move, dx, dy, x, y);
       make_move(x, y);
     }
   }
@@ -72,59 +75,68 @@ static int screen_to_cell(int coord) {
   return (coord - BOARD_START) / CELL_OFFSET;
 }
 
+struct Game game;
+
+void iter_main_loop() {
+  int mouse_x = GetMouseX();
+  int mouse_y = GetMouseY();
+  int selected_cell_x = -1;
+  int selected_cell_y = -1;
+
+  bool mouse_over_cell =
+      BOARD_START <= mouse_x && mouse_x < BOARD_START + BOARD_SIZE &&
+      BOARD_START <= mouse_y && mouse_y < BOARD_START + BOARD_SIZE;
+  if (mouse_over_cell) {
+    selected_cell_x = screen_to_cell(mouse_x);
+    selected_cell_y = screen_to_cell(mouse_y);
+  }
+
+  bool is_mouse_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+  if (is_mouse_pressed && mouse_over_cell) {
+    game.make_move(selected_cell_x, selected_cell_y);
+  }
+
+  BeginDrawing();
+  ClearBackground(RAYWHITE);
+  DrawRectangle(BOARD_OUTER_START, BOARD_OUTER_START, BOARD_OUTER_SIZE,
+                BOARD_OUTER_SIZE, BOARD_BACKGROUND_COLOR);
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      if (i == game.empty_y && j == game.empty_x) {
+        continue;
+      }
+      DrawRectangle(cell_to_screen(j) + CELL_MARGIN,
+                    cell_to_screen(i) + CELL_MARGIN, CELL_SIZE, CELL_SIZE,
+                    RAYWHITE);
+      const char *text = TextFormat("%d", game.board[i][j]);
+      int width = MeasureText(text, CELL_FONT_SIZE);
+      DrawText(text, cell_to_screen(j) + CELL_MARGIN + (CELL_SIZE - width) / 2,
+               cell_to_screen(i) + CELL_MARGIN +
+                   (CELL_SIZE - CELL_FONT_SIZE) / 2,
+               CELL_FONT_SIZE, CELL_TEXT_COLOR);
+    }
+  }
+
+  if (mouse_over_cell) {
+    DrawRectangle(cell_to_screen(selected_cell_x),
+                  cell_to_screen(selected_cell_y), CELL_OFFSET, CELL_OFFSET,
+                  HIGHLIGHT_COLOR);
+  }
+  EndDrawing();
+}
+
 int main() {
   InitWindow(SCREEN_SIZE, SCREEN_SIZE, "Almost 15 Game");
 
-  struct Game game;
   game.shuffle(10000);
 
+#ifdef PLATFORM_WEB
+  emscripten_set_main_loop(iter_main_loop, 0, 1);
+#else
   while (!WindowShouldClose()) {
-    int mouse_x = GetMouseX();
-    int mouse_y = GetMouseY();
-    int selected_cell_x = -1;
-    int selected_cell_y = -1;
-
-    bool mouse_over_cell =
-        BOARD_START <= mouse_x && mouse_x < BOARD_START + BOARD_SIZE &&
-        BOARD_START <= mouse_y && mouse_y < BOARD_START + BOARD_SIZE;
-    if (mouse_over_cell) {
-      selected_cell_x = screen_to_cell(mouse_x);
-      selected_cell_y = screen_to_cell(mouse_y);
-    }
-
-    bool is_mouse_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    if (is_mouse_pressed && mouse_over_cell) {
-      game.make_move(selected_cell_x, selected_cell_y);
-    }
-
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
-    DrawRectangle(BOARD_OUTER_START, BOARD_OUTER_START, BOARD_OUTER_SIZE,
-                  BOARD_OUTER_SIZE, BOARD_BACKGROUND_COLOR);
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 4; ++j) {
-        if (i == game.empty_y && j == game.empty_x) {
-          continue;
-        }
-        DrawRectangle(cell_to_screen(j) + CELL_MARGIN,
-                      cell_to_screen(i) + CELL_MARGIN, CELL_SIZE, CELL_SIZE,
-                      RAYWHITE);
-        const char *text = TextFormat("%d", game.board[i][j]);
-        int width = MeasureText(text, CELL_FONT_SIZE);
-        DrawText(
-            text, cell_to_screen(j) + CELL_MARGIN + (CELL_SIZE - width) / 2,
-            cell_to_screen(i) + CELL_MARGIN + (CELL_SIZE - CELL_FONT_SIZE) / 2,
-            CELL_FONT_SIZE, CELL_TEXT_COLOR);
-      }
-    }
-
-    if (mouse_over_cell) {
-      DrawRectangle(cell_to_screen(selected_cell_x),
-                    cell_to_screen(selected_cell_y), CELL_OFFSET, CELL_OFFSET,
-                    HIGHLIGHT_COLOR);
-    }
-    EndDrawing();
+    iter_main_loop();
   }
+#endif
 
   CloseWindow();
   return 0;
