@@ -1,5 +1,6 @@
-#include <algorithm>
+#include <queue>
 #include <raylib.h>
+#include <stdio.h>
 
 #ifdef PLATFORM_WEB
 #include <emscripten/emscripten.h>
@@ -20,21 +21,110 @@ static const int CELL_FONT_SIZE = 40;
 static const Color BOARD_BACKGROUND_COLOR = {16, 16, 16, 255};
 static const Color CELL_TEXT_COLOR = BOARD_BACKGROUND_COLOR;
 static const Color HIGHLIGHT_COLOR = {0, 0, 255, 64};
+static const double CELL_ANIMATION_DURATION = 0.125;
+
+template <typename T> static T cell_to_screen(const T &coord) {
+  return BOARD_START + CELL_OFFSET * coord;
+}
+
+template <typename T> static T screen_to_cell(const T &coord) {
+  return (coord - BOARD_START) / CELL_OFFSET;
+}
+
+struct Keyframe {
+  double ts_start;
+  double ts_end;
+  int x;
+  int y;
+};
+
+struct AnimatedCell {
+  queue<Keyframe> keyframes;
+  int id;
+  int last_x;
+  int last_y;
+
+  void draw(double ts) {
+    while (!keyframes.empty() && keyframes.front().ts_end < ts) {
+      auto &kf = keyframes.front();
+      last_x = kf.x;
+      last_y = kf.y;
+      keyframes.pop();
+    }
+
+    double draw_x = last_x;
+    double draw_y = last_y;
+
+    if (!keyframes.empty()) {
+      auto &kf = keyframes.front();
+      double next_x = kf.x;
+      double next_y = kf.y;
+      double t = (ts - kf.ts_start) / (kf.ts_end - kf.ts_start);
+      if (t < 0) {
+        t = 0;
+      }
+      /*
+      q = a t^3 + b t^2 + c t + d
+      q(0) = 0
+      q(1) = 1
+      q'(0) = 0
+      q'(1) = 0
+
+      d = 0
+      a + b + c + d = 1
+      c = 0
+      3a + 2b + c = 0
+
+      c = d = 0
+      a + b = 1
+      b = -1.5 a
+
+      -0.5 a = 1
+      a = -2
+      b = 3
+      */
+      double q = t * t * (3 - 2 * t);
+      draw_x = (1 - q) * last_x + q * next_x;
+      draw_y = (1 - q) * last_y + q * next_y;
+    }
+
+    draw_x = cell_to_screen(draw_x) + CELL_MARGIN;
+    draw_y = cell_to_screen(draw_y) + CELL_MARGIN;
+
+    DrawRectangleV({(float)draw_x, (float)draw_y}, {CELL_SIZE, CELL_SIZE},
+                   RAYWHITE);
+
+    const char *text = TextFormat("%d", id);
+    int text_size_x = MeasureText(text, CELL_FONT_SIZE);
+    int text_size_y = CELL_FONT_SIZE;
+    DrawText(text, draw_x + 0.5 * (CELL_SIZE - text_size_x),
+             draw_y + 0.5 * (CELL_SIZE - text_size_y), CELL_FONT_SIZE,
+             CELL_TEXT_COLOR);
+  }
+};
 
 struct Game {
+  AnimatedCell *board[4][4];
+  AnimatedCell cells[15];
+  double last_kf_ts;
   int empty_x;
   int empty_y;
-  int board[4][4];
 
   Game() {
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 4; ++j) {
-        board[i][j] = 4 * i + j + 1;
-      }
+    last_kf_ts = 0;
+
+    for (int i = 0; i < 15; ++i) {
+      int y = i / 4;
+      int x = i % 4;
+      board[y][x] = &cells[i];
+      cells[i].id = i + 1;
+      cells[i].last_x = x;
+      cells[i].last_y = y;
     }
+
     empty_x = 3;
     empty_y = 3;
-    board[empty_y][empty_x] = 0;
+    board[empty_y][empty_x] = nullptr;
   }
 
   void shuffle(int steps) {
@@ -48,15 +138,31 @@ struct Game {
         x = empty_x - dx;
         y = empty_y - dy;
       }
-      // printf("move=%d, dx=%d, dy=%d, x=%d y=%d\n", move, dx, dy, x, y);
       make_move(x, y);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 4; ++j) {
+        auto cell = board[i][j];
+        if (!cell) {
+          continue;
+        }
+
+        while (!cell->keyframes.empty()) {
+          cell->keyframes.pop();
+        }
+        cell->last_x = j;
+        cell->last_y = i;
+      }
     }
   }
 
   bool make_move(int x, int y) {
     int dx = x - empty_x;
     int dy = y - empty_y;
-    if (abs(dx) + abs(dy) != 1) {
+    int adx = dx < 0 ? -dx : dx;
+    int ady = dy < 0 ? -dy : dy;
+    if (adx + ady != 1) {
       return false;
     }
 
@@ -65,19 +171,40 @@ struct Game {
     empty_y = y;
     return true;
   }
+
+  bool make_animated_move(double ts, int x, int y) {
+    auto cell = board[y][x];
+    Keyframe kf;
+    kf.ts_start = max(ts, last_kf_ts);
+    kf.ts_end = kf.ts_start + CELL_ANIMATION_DURATION;
+    kf.x = empty_x;
+    kf.y = empty_y;
+
+    if (!make_move(x, y)) {
+      return false;
+    }
+
+    last_kf_ts = kf.ts_end;
+    cell->keyframes.push(kf);
+    return true;
+  }
+
+  void draw(double ts) {
+    ClearBackground(RAYWHITE);
+    DrawRectangle(BOARD_OUTER_START, BOARD_OUTER_START, BOARD_OUTER_SIZE,
+                  BOARD_OUTER_SIZE, BOARD_BACKGROUND_COLOR);
+    for (auto &cell : cells) {
+      cell.draw(ts);
+    }
+  }
 };
 
-static int cell_to_screen(int coord) {
-  return BOARD_START + CELL_OFFSET * coord;
-}
-
-static int screen_to_cell(int coord) {
-  return (coord - BOARD_START) / CELL_OFFSET;
-}
-
-struct Game game;
+Game game;
+queue<pair<int, int>> animations;
 
 void iter_main_loop() {
+  double ts = GetTime();
+
   int mouse_x = GetMouseX();
   int mouse_y = GetMouseY();
   int selected_cell_x = -1;
@@ -93,30 +220,11 @@ void iter_main_loop() {
 
   bool is_mouse_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
   if (is_mouse_pressed && mouse_over_cell) {
-    game.make_move(selected_cell_x, selected_cell_y);
+    game.make_animated_move(ts, selected_cell_x, selected_cell_y);
   }
 
   BeginDrawing();
-  ClearBackground(RAYWHITE);
-  DrawRectangle(BOARD_OUTER_START, BOARD_OUTER_START, BOARD_OUTER_SIZE,
-                BOARD_OUTER_SIZE, BOARD_BACKGROUND_COLOR);
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4; ++j) {
-      if (i == game.empty_y && j == game.empty_x) {
-        continue;
-      }
-      DrawRectangle(cell_to_screen(j) + CELL_MARGIN,
-                    cell_to_screen(i) + CELL_MARGIN, CELL_SIZE, CELL_SIZE,
-                    RAYWHITE);
-      const char *text = TextFormat("%d", game.board[i][j]);
-      int width = MeasureText(text, CELL_FONT_SIZE);
-      DrawText(text, cell_to_screen(j) + CELL_MARGIN + (CELL_SIZE - width) / 2,
-               cell_to_screen(i) + CELL_MARGIN +
-                   (CELL_SIZE - CELL_FONT_SIZE) / 2,
-               CELL_FONT_SIZE, CELL_TEXT_COLOR);
-    }
-  }
-
+  game.draw(ts);
   if (mouse_over_cell) {
     DrawRectangle(cell_to_screen(selected_cell_x),
                   cell_to_screen(selected_cell_y), CELL_OFFSET, CELL_OFFSET,
@@ -127,8 +235,7 @@ void iter_main_loop() {
 
 int main() {
   InitWindow(SCREEN_SIZE, SCREEN_SIZE, "Almost 15 Game");
-
-  game.shuffle(10000);
+  // game.shuffle(10000);
 
 #ifdef PLATFORM_WEB
   emscripten_set_main_loop(iter_main_loop, 0, 1);
