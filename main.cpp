@@ -121,7 +121,7 @@ struct Game {
   bool player_won;
   double victory_ts;
 
-  Game() {
+  void init() {
     last_kf_ts = 0;
     player_won = false;
 
@@ -140,6 +140,9 @@ struct Game {
   }
 
   void shuffle(int steps) {
+    init();
+    swap(board[3][2], board[2][3]);
+
     for (int i = 0; i < steps; ++i) {
       int move = GetRandomValue(0, 3);
       int dx = 0, dy = 0;
@@ -306,7 +309,7 @@ void iter_main_loop() {
 
 int main() {
   InitWindow(SCREEN_SIZE, SCREEN_SIZE, "Almost 15 Game");
-  // game.shuffle(10000);
+  game.shuffle(10000);
 
 #ifdef PLATFORM_WEB
   emscripten_set_main_loop(iter_main_loop, 0, 1);
