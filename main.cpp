@@ -23,6 +23,15 @@ static const Color CELL_TEXT_COLOR = BOARD_BACKGROUND_COLOR;
 static const Color HIGHLIGHT_COLOR = {0, 0, 255, 64};
 static const double CELL_ANIMATION_DURATION = 0.125;
 
+static const char *VICTORY_TEXT = "Oh, that was close!";
+static const int VICTORY_FONT_SIZE = 40;
+static const Color VICTORY_TEXT_COLOR = {0, 128, 128, 255};
+
+static const char *VICTORY_TEXT_2 =
+    "The truth is, the game was rigged from the start";
+static const int VICTORY_FONT_SIZE_2 = 30;
+static const Color VICTORY_TEXT_COLOR_2 = {128, 0, 128, 255};
+
 template <typename T> static T cell_to_screen(const T &coord) {
   return BOARD_START + CELL_OFFSET * coord;
 }
@@ -109,9 +118,12 @@ struct Game {
   double last_kf_ts;
   int empty_x;
   int empty_y;
+  bool player_won;
+  double victory_ts;
 
   Game() {
     last_kf_ts = 0;
+    player_won = false;
 
     for (int i = 0; i < 15; ++i) {
       int y = i / 4;
@@ -155,6 +167,8 @@ struct Game {
         cell->last_y = i;
       }
     }
+
+    player_won = false;
   }
 
   bool make_move(int x, int y) {
@@ -186,6 +200,14 @@ struct Game {
 
     last_kf_ts = kf.ts_end;
     cell->keyframes.push(kf);
+
+    if (!player_won) {
+      if (check_victory()) {
+        player_won = true;
+        victory_ts = ts;
+      }
+    }
+
     return true;
   }
 
@@ -196,19 +218,69 @@ struct Game {
     for (auto &cell : cells) {
       cell.draw(ts);
     }
+
+    if (player_won) {
+      int size_x = MeasureText(VICTORY_TEXT, VICTORY_FONT_SIZE);
+      int size_y = VICTORY_FONT_SIZE;
+      DrawText(VICTORY_TEXT, (SCREEN_SIZE - size_x) / 2,
+               (BOARD_OUTER_START - size_y) / 2, VICTORY_FONT_SIZE,
+               VICTORY_TEXT_COLOR);
+
+      double faded_in = (ts - (victory_ts + 3)) / 5;
+      if (faded_in < 0) {
+        faded_in = 0;
+      }
+      if (faded_in > 1) {
+        faded_in = 1;
+      }
+      size_x = MeasureText(VICTORY_TEXT_2, VICTORY_FONT_SIZE_2);
+      size_y = VICTORY_FONT_SIZE_2;
+      Color c = VICTORY_TEXT_COLOR_2;
+      c.a = 255 * faded_in;
+      DrawText(VICTORY_TEXT_2, (SCREEN_SIZE - size_x) / 2,
+               (BOARD_OUTER_START + BOARD_OUTER_SIZE + SCREEN_SIZE - size_y) /
+                   2,
+               VICTORY_FONT_SIZE_2, c);
+    }
+  }
+
+  bool check_victory() {
+    int right_place = 0;
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 4; ++j) {
+        auto cell = board[i][j];
+        int real_id = cell ? cell->id - 1 : 15;
+        int expected_i = real_id / 4;
+        int expected_j = real_id % 4;
+        if (i == expected_i && j == expected_j) {
+          ++right_place;
+        }
+      }
+    }
+    return right_place >= 14;
   }
 };
 
 Game game;
 queue<pair<int, int>> animations;
+int prev_touch_count = 0;
 
 void iter_main_loop() {
   double ts = GetTime();
 
+  bool is_mouse_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
   int mouse_x = GetMouseX();
   int mouse_y = GetMouseY();
   int selected_cell_x = -1;
   int selected_cell_y = -1;
+
+  int touch_count = GetTouchPointCount();
+  if (prev_touch_count == 0 && touch_count > 0) {
+    is_mouse_pressed = true;
+    mouse_x = GetTouchX();
+    mouse_y = GetTouchY();
+  }
+  prev_touch_count = touch_count;
 
   bool mouse_over_cell =
       BOARD_START <= mouse_x && mouse_x < BOARD_START + BOARD_SIZE &&
@@ -218,7 +290,6 @@ void iter_main_loop() {
     selected_cell_y = screen_to_cell(mouse_y);
   }
 
-  bool is_mouse_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
   if (is_mouse_pressed && mouse_over_cell) {
     game.make_animated_move(ts, selected_cell_x, selected_cell_y);
   }
